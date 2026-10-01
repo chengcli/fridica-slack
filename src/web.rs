@@ -363,6 +363,40 @@ impl WebClient {
         }
         Ok(id)
     }
+    /// A workspace member's readable name from `users.info` (needs
+    /// `users:read`): the display name, else the real name, else the handle.
+    /// `None` when Slack has no usable name for the user.
+    pub async fn user_name(&self, user: &str) -> Result<Option<String>> {
+        if !self.is_validated() {
+            return Err(Failure::NotValidated);
+        }
+        let id = user.len() <= 64
+            && user.len() > 1
+            && matches!(user.as_bytes()[0], b'U' | b'W')
+            && user
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit());
+        if !id {
+            return Err(Failure::Scope);
+        }
+        let response = self.read("users.info", json!({"user":user}), None).await?;
+        let u = &response["user"];
+        if u["id"] != user {
+            return Err(Failure::InvalidResponse);
+        }
+        let name = [
+            &u["profile"]["display_name"],
+            &u["real_name"],
+            &u["profile"]["real_name"],
+            &u["name"],
+        ]
+        .into_iter()
+        .filter_map(Value::as_str)
+        .map(|n| n.chars().filter(|c| !c.is_control()).collect::<String>())
+        .map(|n| n.trim().to_string())
+        .find(|n| !n.is_empty() && n.chars().count() <= 80);
+        Ok(name)
+    }
     /// A file's `url_private`, from `files.info`.
     pub(crate) async fn files_info(&self, file_id: String) -> Result<Option<String>> {
         let client = self.client(None);

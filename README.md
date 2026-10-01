@@ -29,7 +29,8 @@ The typed Web API calls (`auth.test`, `conversations.info`,
 [slack-morphism](https://crates.io/crates/slack-morphism) models over this
 crate's own HTTP connector, which provides the journaling, limits and failure
 classification. `chat.postMessage` (metadata payloads keep their numeric
-fields), history and replies (raw message JSON) are sent directly.
+fields), history and replies (raw message JSON), and `users.info` (a member's
+display name) are sent directly.
 
 ## What you supply
 

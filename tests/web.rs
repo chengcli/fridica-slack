@@ -298,3 +298,30 @@ async fn file_urls_resolve_through_files_info_and_only_to_slack_hosts() {
     assert_eq!(web.resolve("../x".into()).await, Err(FileFailure::Url));
     assert!(seen.lock().unwrap()[2].starts_with("GET /api/files.info?file=F1 "));
 }
+
+#[tokio::test]
+async fn user_names_come_from_users_info() {
+    let user = |id: &str, display: &str, real: &str| json!({"ok":true,"user":{"id":id,"name":"handle","real_name":real,"profile":{"display_name":display,"real_name":real}}});
+    let mut replies = validation();
+    replies.push((200, "", user("U2", "Ada", "Ada Lovelace")));
+    replies.push((200, "", user("U3", "", "Grace Hopper")));
+    replies.push((200, "", user("U9", "", "")));
+    replies.push((200, "", user("U4", "Ada", "")));
+    let (base, seen) = slack(replies).await;
+    let web = client(base, Arc::new(Memory::default()));
+    assert_eq!(web.user_name("U2").await, Err(Failure::NotValidated));
+    web.validate().await.unwrap();
+    assert_eq!(web.user_name("U2").await.unwrap().as_deref(), Some("Ada"));
+    assert_eq!(
+        web.user_name("U3").await.unwrap().as_deref(),
+        Some("Grace Hopper")
+    );
+    assert_eq!(
+        web.user_name("U9").await.unwrap().as_deref(),
+        Some("handle")
+    );
+    // A reply about another user is not this user's name.
+    assert_eq!(web.user_name("U5").await, Err(Failure::InvalidResponse));
+    assert_eq!(web.user_name("../x").await, Err(Failure::Scope));
+    assert!(seen.lock().unwrap()[2].starts_with("GET /api/users.info?user=U2 "));
+}
