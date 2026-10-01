@@ -33,6 +33,8 @@ pub(crate) struct Transport {
     pub client: Client,
     pub journal: Arc<dyn Journal>,
     pub base: Url,
+    /// Kept to rebuild the client for test endpoints.
+    #[cfg_attr(not(feature = "testing"), allow(dead_code))]
     pub timeout: Duration,
     /// The `x-oauth-scopes` header of the latest `auth.test` response.
     pub scopes: Mutex<Option<String>>,
