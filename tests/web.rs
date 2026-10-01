@@ -271,3 +271,30 @@ async fn rejected_history_pages_carry_slacks_error_code() {
         })
     );
 }
+
+#[tokio::test]
+async fn file_urls_resolve_through_files_info_and_only_to_slack_hosts() {
+    use fridica_slack::files::{Downloader, Failure as FileFailure};
+    let file = |url: &str| json!({"ok":true,"file":{"id":"F1","created":1,"timestamp":1,"name":"plan.txt","mimetype":"text/plain","url_private":url}});
+    let mut replies = validation();
+    replies.push((
+        200,
+        "",
+        file("https://files.slack.com/files-pri/T1-F1/plan.txt"),
+    ));
+    replies.push((200, "", file("https://evil.test/plan.txt")));
+    let (base, seen) = slack(replies).await;
+    let web = client(base, Arc::new(Memory::default()));
+    assert_eq!(
+        web.resolve("F1".into()).await,
+        Err(FileFailure::NotValidated)
+    );
+    web.validate().await.unwrap();
+    assert_eq!(
+        web.resolve("F1".into()).await.unwrap(),
+        "https://files.slack.com/files-pri/T1-F1/plan.txt"
+    );
+    assert_eq!(web.resolve("F1".into()).await, Err(FileFailure::Url));
+    assert_eq!(web.resolve("../x".into()).await, Err(FileFailure::Url));
+    assert!(seen.lock().unwrap()[2].starts_with("GET /api/files.info?file=F1 "));
+}

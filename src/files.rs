@@ -50,4 +50,8 @@ pub trait Downloader: Send + Sync {
     /// Return at most FILE_LIMIT + 1 bytes. A zero size means unknown length.
     /// `html` allows an HTML answer, which may otherwise be a sign-in page.
     fn download(&self, url: String, html: bool) -> BoxFuture<'_, Result<Download, Failure>>;
+    /// The download URL of a file by ID, for events that carry none.
+    fn resolve(&self, _file_id: String) -> BoxFuture<'_, Result<String, Failure>> {
+        Box::pin(async { Err(Failure::Unavailable) })
+    }
 }

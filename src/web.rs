@@ -14,6 +14,7 @@ use slack_morphism::{
     api::{
         SlackApiAppsConnectionOpenRequest, SlackApiConversationsInfoRequest, SlackApiFilesComplete,
         SlackApiFilesCompleteUploadExternalRequest, SlackApiFilesGetUploadUrlExternalRequest,
+        SlackApiFilesInfoRequest,
     },
     SlackApiToken, SlackApiTokenValue, SlackChannelId, SlackClient, SlackFileId, SlackTs,
 };
@@ -361,6 +362,17 @@ impl WebClient {
             });
         }
         Ok(id)
+    }
+    /// A file's `url_private`, from `files.info`.
+    pub(crate) async fn files_info(&self, file_id: String) -> Result<Option<String>> {
+        let client = self.client(None);
+        let token = Self::api_token(&self.token);
+        let info = client
+            .open_session(&token)
+            .files_info(&SlackApiFilesInfoRequest::new(SlackFileId(file_id)))
+            .await
+            .map_err(connector::failure)?;
+        Ok(info.file.url_private.map(|url| url.to_string()))
     }
     fn upload_url(&self, value: &str) -> Result<Url> {
         let url = Url::parse(value).map_err(|_| Failure::InvalidResponse)?;

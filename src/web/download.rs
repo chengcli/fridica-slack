@@ -57,6 +57,31 @@ impl Cache {
     }
 }
 impl WebClient {
+    /// `files.info`, journaled like every API call, for a file's private URL.
+    async fn file_url(&self, file_id: String) -> Result<String, Failure> {
+        if !self.is_validated() {
+            return Err(Failure::NotValidated);
+        }
+        if file_id.len() < 2
+            || file_id.len() > 64
+            || !file_id.starts_with('F')
+            || !file_id.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return Err(Failure::Url);
+        }
+        let info = self
+            .files_info(file_id)
+            .await
+            .map_err(|failure| match failure {
+                crate::web::Failure::Recording => Failure::Recording,
+                crate::web::Failure::RateLimited { retry_after } => {
+                    Failure::RateLimited { retry_after }
+                }
+                crate::web::Failure::Timeout => Failure::Timeout,
+                _ => Failure::Unavailable,
+            })?;
+        info.filter(|url| file_url(url)).ok_or(Failure::Url)
+    }
     fn file_target(&self, value: &str) -> Result<Url, Failure> {
         let url = Url::parse(value).map_err(|_| Failure::Url)?;
         #[cfg(feature = "testing")]
@@ -192,5 +217,8 @@ impl WebClient {
 impl Downloader for WebClient {
     fn download(&self, url: String, html: bool) -> BoxFuture<'_, Result<Download, Failure>> {
         Box::pin(self.download_file(url, html))
+    }
+    fn resolve(&self, file_id: String) -> BoxFuture<'_, Result<String, Failure>> {
+        Box::pin(self.file_url(file_id))
     }
 }
