@@ -237,6 +237,8 @@ fn code(body: &Value) -> String {
         "token_expired",
         "missing_scope",
         "channel_not_found",
+        "thread_not_found",
+        "message_not_found",
         "not_in_channel",
         "is_archived",
         "no_permission",

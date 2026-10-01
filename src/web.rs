@@ -427,7 +427,15 @@ impl History for WebClient {
                 Failure::InvalidResponse | Failure::ResponseLimit => {
                     HistoryFailure::InvalidResponse
                 }
-                _ => HistoryFailure::Rejected,
+                Failure::Rejected { code } | Failure::Ambiguous { code } => {
+                    HistoryFailure::Rejected { code }
+                }
+                other => HistoryFailure::Rejected {
+                    code: serde_json::to_value(&other)
+                        .ok()
+                        .and_then(|v| v["error"].as_str().map(str::to_owned))
+                        .unwrap_or_else(|| "rejected".into()),
+                },
             })
         })
     }

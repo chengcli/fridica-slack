@@ -31,8 +31,14 @@ pub enum HistoryFailure {
     Timeout,
     Connection,
     InvalidResponse,
-    Rejected,
-    RateLimited { retry_after: f64 },
+    /// Slack refused the request; `code` is Slack's `error` (e.g.
+    /// `thread_not_found`), or a fixed name for a local refusal.
+    Rejected {
+        code: String,
+    },
+    RateLimited {
+        retry_after: f64,
+    },
 }
 impl std::fmt::Display for HistoryFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

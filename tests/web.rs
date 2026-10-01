@@ -236,3 +236,38 @@ async fn a_bot_token_or_unjoined_channel_never_validates() {
     assert_eq!(web.validate().await, Err(Failure::Membership));
     assert!(!web.is_validated());
 }
+
+#[tokio::test]
+async fn rejected_history_pages_carry_slacks_error_code() {
+    use fridica_slack::history::{History, HistoryFailure, Method, PageRequest};
+    let mut replies = validation();
+    replies.push((200, "", json!({"ok":false,"error":"thread_not_found"})));
+    let (base, _) = slack(replies).await;
+    let web = client(base, Arc::new(Memory::default()));
+    web.validate().await.unwrap();
+    let request = PageRequest {
+        method: Method::Replies,
+        channel: "C1".into(),
+        oldest: "1.0".into(),
+        ts: Some("100.1".into()),
+        cursor: None,
+        limit: 200,
+        include_all_metadata: true,
+    };
+    assert_eq!(
+        web.page(request.clone()).await,
+        Err(HistoryFailure::Rejected {
+            code: "thread_not_found".into()
+        })
+    );
+    let other = PageRequest {
+        channel: "C9".into(),
+        ..request
+    };
+    assert_eq!(
+        web.page(other).await,
+        Err(HistoryFailure::Rejected {
+            code: "scope".into()
+        })
+    );
+}
