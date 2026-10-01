@@ -30,7 +30,8 @@ The typed Web API calls (`auth.test`, `conversations.info`,
 crate's own HTTP connector, which provides the journaling, limits and failure
 classification. `chat.postMessage` (metadata payloads keep their numeric
 fields), history and replies (raw message JSON), and `users.info` (a member's
-display name) are sent directly.
+display name) are sent directly. [`Downloader::save`] streams a file of up to
+1 GiB into a new private file on disk, for data a worker needs.
 
 ## What you supply
 

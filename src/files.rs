@@ -2,9 +2,12 @@
 //! data, never instructions.
 use crate::BoxFuture;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
-/// Most bytes of a file that are read.
+/// Most bytes of a file that are read into memory.
 pub const FILE_LIMIT: usize = 64 * 1024;
+/// Most bytes [`Downloader::save`] writes for one file.
+pub const SAVE_LIMIT: u64 = 1 << 30;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Download {
     pub data: Vec<u8>,
@@ -22,7 +25,11 @@ pub enum Failure {
     Connection,
     Recording,
     InvalidResponse,
-    RateLimited { retry_after: f64 },
+    RateLimited {
+        retry_after: f64,
+    },
+    /// The file is longer than the caller's limit; nothing was kept.
+    TooLarge,
 }
 impl Failure {
     pub fn note(&self) -> &'static str {
@@ -36,6 +43,7 @@ impl Failure {
             Self::NotValidated => "Slack identity has not been validated",
             Self::Timeout => "download timed out",
             Self::RateLimited { .. } => "Slack rate limited the download",
+            Self::TooLarge => "the file is larger than the limit",
             _ => "download failed",
         }
     }
@@ -52,6 +60,17 @@ pub trait Downloader: Send + Sync {
     fn download(&self, url: String, html: bool) -> BoxFuture<'_, Result<Download, Failure>>;
     /// The download URL of a file by ID, for events that carry none.
     fn resolve(&self, _file_id: String) -> BoxFuture<'_, Result<String, Failure>> {
+        Box::pin(async { Err(Failure::Unavailable) })
+    }
+    /// Stream a file of at most `limit` bytes into a new private file at
+    /// `path`, returning its length. A longer file, an HTML answer or any
+    /// failure leaves nothing at `path`. The bytes are untrusted data.
+    fn save(
+        &self,
+        _url: String,
+        _path: PathBuf,
+        _limit: u64,
+    ) -> BoxFuture<'_, Result<u64, Failure>> {
         Box::pin(async { Err(Failure::Unavailable) })
     }
 }

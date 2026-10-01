@@ -325,3 +325,59 @@ async fn user_names_come_from_users_info() {
     assert_eq!(web.user_name("../x").await, Err(Failure::Scope));
     assert!(seen.lock().unwrap()[2].starts_with("GET /api/users.info?user=U2 "));
 }
+
+#[tokio::test]
+async fn saved_files_stream_to_a_private_file_within_the_limit() {
+    use fridica_slack::files::{Downloader, Failure as FileFailure};
+    use std::os::unix::fs::PermissionsExt;
+    let body = json!("x".repeat(100_000));
+    let mut replies = validation();
+    replies.push((200, "", body.clone()));
+    replies.push((200, "", body.clone()));
+    replies.push((200, "", body.clone()));
+    replies.push((
+        200,
+        "content-type: text/html\r\n",
+        json!("<html>sign in</html>"),
+    ));
+    let (base, seen) = slack(replies).await;
+    let web = client(base.clone(), Arc::new(Memory::default()));
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("data.nc");
+    let url = base.join("/files-pri/T1-F1/data.nc").unwrap().to_string();
+    assert_eq!(
+        web.save(url.clone(), target.clone(), 1 << 20).await,
+        Err(FileFailure::NotValidated)
+    );
+    web.validate().await.unwrap();
+    let expected = body.to_string();
+    assert_eq!(
+        web.save(url.clone(), target.clone(), 1 << 20)
+            .await
+            .unwrap(),
+        expected.len() as u64
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), expected);
+    assert_eq!(
+        std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+    // An existing file is never overwritten.
+    assert_eq!(
+        web.save(url.clone(), target.clone(), 1 << 20).await,
+        Err(FileFailure::Unavailable)
+    );
+    let small = dir.path().join("small.nc");
+    assert_eq!(
+        web.save(url.clone(), small.clone(), 1000).await,
+        Err(FileFailure::TooLarge)
+    );
+    assert!(!small.exists());
+    let html = dir.path().join("html.nc");
+    assert_eq!(
+        web.save(url, html.clone(), 1 << 20).await,
+        Err(FileFailure::Unavailable)
+    );
+    assert!(!html.exists());
+    assert!(seen.lock().unwrap()[2].starts_with("GET /files-pri/T1-F1/data.nc "));
+}

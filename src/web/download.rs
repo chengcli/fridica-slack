@@ -10,7 +10,8 @@ use crate::{
 };
 use reqwest::{header::AUTHORIZATION, Url};
 use serde_json::json;
-use std::{collections::VecDeque, time::Duration};
+use std::{collections::VecDeque, path::PathBuf, time::Duration};
+use tokio::io::AsyncWriteExt;
 #[derive(Default)]
 pub(super) struct Cache {
     success: VecDeque<((String, bool, bool), Download)>,
@@ -166,6 +167,114 @@ impl WebClient {
         data.truncate(FILE_LIMIT + 1);
         Ok(Download { data, size })
     }
+    /// Stream a response body into a new file, removing it on any failure.
+    async fn file_stream(&self, url: Url, path: &PathBuf, limit: u64) -> Result<u64, Failure> {
+        let failure = |e: reqwest::Error| {
+            if e.is_timeout() {
+                Failure::Timeout
+            } else {
+                Failure::Connection
+            }
+        };
+        let authorization = bearer(&self.token).map_err(|_| Failure::Url)?;
+        let mut response = self
+            .transport
+            .client
+            .get(url)
+            .header(AUTHORIZATION, authorization)
+            .send()
+            .await
+            .map_err(failure)?;
+        if response.status().as_u16() == 429 {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<f64>().ok())
+                .filter(|n| n.is_finite())
+                .unwrap_or(30.);
+            return Err(Failure::RateLimited { retry_after });
+        }
+        let is_html = response
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("text/html");
+        if response.status().as_u16() != 200 || is_html {
+            return Err(Failure::Unavailable);
+        }
+        if response.content_length().is_some_and(|n| n > limit) {
+            return Err(Failure::TooLarge);
+        }
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(path)
+            .await
+            .map_err(|_| Failure::Unavailable)?;
+        let written = async {
+            let mut written = 0u64;
+            while let Some(chunk) = response.chunk().await.map_err(failure)? {
+                written += chunk.len() as u64;
+                if written > limit {
+                    return Err(Failure::TooLarge);
+                }
+                file.write_all(&chunk)
+                    .await
+                    .map_err(|_| Failure::Unavailable)?;
+            }
+            file.flush().await.map_err(|_| Failure::Unavailable)?;
+            Ok(written)
+        }
+        .await;
+        drop(file);
+        if written.is_err() {
+            let _ = tokio::fs::remove_file(path).await;
+        }
+        written
+    }
+    async fn save_file(&self, url: String, path: PathBuf, limit: u64) -> Result<u64, Failure> {
+        if !self.is_validated() {
+            return Err(Failure::NotValidated);
+        }
+        let scopes = self
+            .file_scopes
+            .read()
+            .map_err(|_| Failure::Recording)?
+            .clone();
+        if scopes.as_ref().is_some_and(|s| !s.contains("files:read")) {
+            return Err(Failure::MissingScope);
+        }
+        let target = self.file_target(&url)?;
+        let journal = &self.transport.journal;
+        let record =
+            json!({"url":url.replace(&self.token,"[credential]"),"save":true,"limit":limit});
+        let call = journal
+            .record("slack_file_call", record, false)
+            .await
+            .map_err(|_| Failure::Recording)?;
+        // A large file takes a while; a stalled stream is still bounded.
+        let allowance = Duration::from_secs(60 + limit / (1 << 20));
+        let result = tokio::time::timeout(allowance, self.file_stream(target, &path, limit))
+            .await
+            .unwrap_or(Err(Failure::Timeout));
+        if matches!(result, Err(Failure::Timeout)) {
+            let _ = tokio::fs::remove_file(&path).await;
+        }
+        let complete = !matches!(result, Err(Failure::Timeout | Failure::Connection));
+        let record = json!({"call":call,"saved":result});
+        journal
+            .complete(call, "slack_file_result", record, complete)
+            .await
+            .map_err(|_| Failure::Recording)?;
+        result
+    }
     async fn download_file(&self, url: String, html: bool) -> Result<Download, Failure> {
         if !self.is_validated() {
             return Err(Failure::NotValidated);
@@ -220,5 +329,8 @@ impl Downloader for WebClient {
     }
     fn resolve(&self, file_id: String) -> BoxFuture<'_, Result<String, Failure>> {
         Box::pin(self.file_url(file_id))
+    }
+    fn save(&self, url: String, path: PathBuf, limit: u64) -> BoxFuture<'_, Result<u64, Failure>> {
+        Box::pin(self.save_file(url, path, limit))
     }
 }
