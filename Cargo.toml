@@ -1,0 +1,35 @@
+[package]
+name = "fridica-slack"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+description = "Durable Slack transport for user-token agents: Socket Mode with commit-before-ack, a recorded Web API client on slack-morphism, and event normalization"
+license = "MIT"
+repository = "https://github.com/chengcli/fridica-slack"
+readme = "README.md"
+keywords = ["slack", "socket-mode", "agent", "bot"]
+categories = ["api-bindings", "asynchronous", "network-programming"]
+
+[features]
+# Loopback endpoints and proxy isolation for integration tests of a host.
+testing = []
+
+[dependencies]
+futures-util = { version = "0.3", features = ["sink"] }
+reqwest = { version = "0.12.28", default-features = false, features = ["json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+slack-morphism = { version = "2.29", default-features = false }
+tokio = { version = "1", features = ["macros", "net", "rt", "sync", "time"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time", "io-util"] }
+
+[[test]]
+name = "web"
+required-features = ["testing"]
+
+[lints.rust]
+unsafe_code = "forbid"
