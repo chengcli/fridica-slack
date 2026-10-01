@@ -168,7 +168,15 @@ impl WebClient {
         Ok(Download { data, size })
     }
     /// Stream a response body into a new file, removing it on any failure.
-    async fn file_stream(&self, url: Url, path: &PathBuf, limit: u64) -> Result<u64, Failure> {
+    /// `allowance` replaces the client's request timeout, which is sized for
+    /// API calls, not for a file of up to `limit` bytes.
+    async fn file_stream(
+        &self,
+        url: Url,
+        path: &PathBuf,
+        limit: u64,
+        allowance: Duration,
+    ) -> Result<u64, Failure> {
         let failure = |e: reqwest::Error| {
             if e.is_timeout() {
                 Failure::Timeout
@@ -181,6 +189,7 @@ impl WebClient {
             .transport
             .client
             .get(url)
+            .timeout(allowance)
             .header(AUTHORIZATION, authorization)
             .send()
             .await
@@ -261,9 +270,12 @@ impl WebClient {
             .map_err(|_| Failure::Recording)?;
         // A large file takes a while; a stalled stream is still bounded.
         let allowance = Duration::from_secs(60 + limit / (1 << 20));
-        let result = tokio::time::timeout(allowance, self.file_stream(target, &path, limit))
-            .await
-            .unwrap_or(Err(Failure::Timeout));
+        let result = tokio::time::timeout(
+            allowance + Duration::from_secs(5),
+            self.file_stream(target, &path, limit, allowance),
+        )
+        .await
+        .unwrap_or(Err(Failure::Timeout));
         if matches!(result, Err(Failure::Timeout)) {
             let _ = tokio::fs::remove_file(&path).await;
         }

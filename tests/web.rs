@@ -85,6 +85,19 @@ async fn slack(replies: Vec<(u16, &'static str, Value)>) -> (Url, Arc<Mutex<Vec<
                     .to_string(),
             );
             let (status, headers, body) = replies.pop_front().unwrap();
+            // "x-test-delay: N" holds the answer back N seconds (test only).
+            let delay = headers
+                .lines()
+                .find_map(|l| l.strip_prefix("x-test-delay: "))
+                .and_then(|v| v.trim().parse::<u64>().ok());
+            if let Some(seconds) = delay {
+                tokio::time::sleep(Duration::from_secs(seconds)).await;
+            }
+            let headers: String = headers
+                .split("\r\n")
+                .filter(|l| !l.starts_with("x-test-delay:"))
+                .collect::<Vec<_>>()
+                .join("\r\n");
             let body = body.to_string();
             let reply = format!("HTTP/1.1 {status} X\r\nContent-Length: {}\r\n{headers}Connection: close\r\n\r\n{body}", body.len());
             stream.write_all(reply.as_bytes()).await.unwrap();
@@ -380,4 +393,29 @@ async fn saved_files_stream_to_a_private_file_within_the_limit() {
     );
     assert!(!html.exists());
     assert!(seen.lock().unwrap()[2].starts_with("GET /files-pri/T1-F1/data.nc "));
+}
+
+#[tokio::test]
+async fn a_saved_file_outlives_the_api_call_timeout() {
+    use fridica_slack::files::{Downloader, Failure as FileFailure};
+    // The client's 2 s request timeout is for API calls; a file stream of
+    // this size gets its own allowance, so a 3 s wait still succeeds.
+    let mut replies = validation();
+    replies.push((200, "x-test-delay: 3\r\n", json!("slow bytes")));
+    replies.push((200, "x-test-delay: 3\r\n", json!("slow bytes")));
+    let (base, _seen) = slack(replies).await;
+    let web = client(base.clone(), Arc::new(Memory::default()));
+    web.validate().await.unwrap();
+    let url = base.join("/files-pri/T1-F2/slow.nc").unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("slow.nc");
+    assert_eq!(
+        web.save(url.clone(), target.clone(), 1 << 20)
+            .await
+            .unwrap(),
+        12
+    );
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "\"slow bytes\"");
+    // The bounded in-memory read keeps the API timeout.
+    assert_eq!(web.download(url, false).await, Err(FileFailure::Timeout));
 }
